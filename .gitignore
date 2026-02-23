@@ -1,0 +1,11 @@
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+dist/
+.env
+
+# Bun
+bun.lockb
+.bun-cache/
+*.bun
