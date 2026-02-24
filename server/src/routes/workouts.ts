@@ -1,51 +1,60 @@
-import type { FastifyInstance } from "fastify";
-import { db, checkAndMarkPR } from "../db/index.js";
+import { Elysia, t } from "elysia";
+import { checkAndMarkPR, db } from "../db/index.js";
 
-export async function workoutsRoutes(app: FastifyInstance) {
+export const workoutsRoutes = new Elysia()
   // List exercises
-  app.get("/api/exercises", () => {
+  .get("/api/exercises", () => {
     return db
       .query<{ id: number; name: string; muscle_group: string | null }, []>(
         `SELECT * FROM exercises ORDER BY name ASC`
       )
       .all();
-  });
+  })
 
   // Create or get exercise
-  app.post<{ Body: { name: string; muscle_group?: string } }>(
+  .post(
     "/api/exercises",
-    { schema: { body: { type: "object", required: ["name"], properties: { name: { type: "string" }, muscle_group: { type: "string" } } } } },
-    (req) => {
-      const { name, muscle_group } = req.body;
-      db.run(
-        `INSERT OR IGNORE INTO exercises (name, muscle_group) VALUES (?, ?)`,
-        [name, muscle_group ?? null]
-      );
+    ({ body }) => {
+      const { name, muscle_group } = body;
+      db.run(`INSERT OR IGNORE INTO exercises (name, muscle_group) VALUES (?, ?)`, [
+        name,
+        muscle_group ?? null,
+      ]);
       return db
         .query<{ id: number; name: string; muscle_group: string | null }, [string]>(
           `SELECT * FROM exercises WHERE name = ?`
         )
         .get(name);
+    },
+    {
+      body: t.Object({
+        name: t.String(),
+        muscle_group: t.Optional(t.String()),
+      }),
     }
-  );
+  )
 
   // Get exercise progress (weight over time for chart)
-  app.get<{ Params: { id: string } }>("/api/exercises/:id/progress", (req) => {
-    return db
-      .query<{ date: string; max_weight: number; total_reps: number }, [number]>(
-        `SELECT sess.date, MAX(ws.weight_kg) as max_weight, SUM(ws.reps) as total_reps
-         FROM workout_sets ws
-         JOIN workout_sessions sess ON ws.session_id = sess.id
-         WHERE ws.exercise_id = ?
-         GROUP BY sess.date
-         ORDER BY sess.date ASC
-         LIMIT 30`
-      )
-      .all(parseInt(req.params.id));
-  });
+  .get(
+    "/api/exercises/:id/progress",
+    ({ params }) => {
+      return db
+        .query<{ date: string; max_weight: number; total_reps: number }, [number]>(
+          `SELECT sess.date, MAX(ws.weight_kg) as max_weight, SUM(ws.reps) as total_reps
+           FROM workout_sets ws
+           JOIN workout_sessions sess ON ws.session_id = sess.id
+           WHERE ws.exercise_id = ?
+           GROUP BY sess.date
+           ORDER BY sess.date ASC
+           LIMIT 30`
+        )
+        .all(parseInt(params.id, 10));
+    },
+    { params: t.Object({ id: t.String() }) }
+  )
 
   // List sessions (most recent first)
-  app.get("/api/sessions", () => {
+  .get("/api/sessions", () => {
     const sessions = db
       .query<{ id: number; date: string; notes: string | null; created_at: string }, []>(
         `SELECT * FROM workout_sessions ORDER BY date DESC LIMIT 20`
@@ -54,7 +63,16 @@ export async function workoutsRoutes(app: FastifyInstance) {
 
     return sessions.map((s) => {
       const sets = db
-        .query<{ exercise_name: string; reps: number; weight_kg: number; is_pr: number; set_number: number }, [number]>(
+        .query<
+          {
+            exercise_name: string;
+            reps: number;
+            weight_kg: number;
+            is_pr: number;
+            set_number: number;
+          },
+          [number]
+        >(
           `SELECT e.name as exercise_name, ws.reps, ws.weight_kg, ws.is_pr, ws.set_number
            FROM workout_sets ws
            JOIN exercises e ON ws.exercise_id = e.id
@@ -83,59 +101,48 @@ export async function workoutsRoutes(app: FastifyInstance) {
         prCount: sets.filter((s) => s.is_pr).length,
       };
     });
-  });
+  })
 
   // Create session
-  app.post<{ Body: { date?: string; notes?: string } }>(
+  .post(
     "/api/sessions",
-    { schema: { body: { type: "object", properties: { date: { type: "string" }, notes: { type: "string" } } } } },
-    (req) => {
-      const date = req.body.date ?? new Date().toISOString().split("T")[0];
+    ({ body }) => {
+      const date = body.date ?? new Date().toISOString().split("T")[0];
       const result = db
         .query<{ id: number }, [string, string | null]>(
           `INSERT INTO workout_sessions (date, notes) VALUES (?, ?) RETURNING id`
         )
-        .get(date, req.body.notes ?? null);
+        .get(date, body.notes ?? null);
       return db
         .query<{ id: number; date: string; notes: string | null }, [number]>(
           `SELECT * FROM workout_sessions WHERE id = ?`
         )
         .get(result!.id);
+    },
+    {
+      body: t.Object({
+        date: t.Optional(t.String()),
+        notes: t.Optional(t.String()),
+      }),
     }
-  );
+  )
 
   // Delete session
-  app.delete<{ Params: { id: string } }>("/api/sessions/:id", (req, reply) => {
-    db.run(`DELETE FROM workout_sessions WHERE id = ?`, [parseInt(req.params.id)]);
-    reply.send({ ok: true });
-  });
+  .delete(
+    "/api/sessions/:id",
+    ({ params }) => {
+      db.run(`DELETE FROM workout_sessions WHERE id = ?`, [parseInt(params.id, 10)]);
+      return { ok: true };
+    },
+    { params: t.Object({ id: t.String() }) }
+  )
 
   // Add sets to a session
-  app.post<{
-    Params: { id: string };
-    Body: {
-      exercise_name: string;
-      muscle_group?: string;
-      sets: { reps: number; weight_kg: number }[];
-    };
-  }>(
+  .post(
     "/api/sessions/:id/sets",
-    {
-      schema: {
-        body: {
-          type: "object",
-          required: ["exercise_name", "sets"],
-          properties: {
-            exercise_name: { type: "string" },
-            muscle_group: { type: "string" },
-            sets: { type: "array", items: { type: "object", required: ["reps", "weight_kg"], properties: { reps: { type: "number" }, weight_kg: { type: "number" } } } },
-          },
-        },
-      },
-    },
-    (req) => {
-      const sessionId = parseInt(req.params.id);
-      const { exercise_name, muscle_group, sets } = req.body;
+    ({ params, body }) => {
+      const sessionId = parseInt(params.id, 10);
+      const { exercise_name, muscle_group, sets } = body;
 
       db.run(`INSERT OR IGNORE INTO exercises (name, muscle_group) VALUES (?, ?)`, [
         exercise_name,
@@ -157,18 +164,31 @@ export async function workoutsRoutes(app: FastifyInstance) {
       });
 
       return { exercise_name, sets: inserted };
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      body: t.Object({
+        exercise_name: t.String(),
+        muscle_group: t.Optional(t.String()),
+        sets: t.Array(
+          t.Object({
+            reps: t.Number(),
+            weight_kg: t.Number(),
+          })
+        ),
+      }),
     }
-  );
+  )
 
   // Delete a set
-  app.delete<{ Params: { id: string; setId: string } }>(
+  .delete(
     "/api/sessions/:id/sets/:setId",
-    (req, reply) => {
+    ({ params }) => {
       db.run(`DELETE FROM workout_sets WHERE id = ? AND session_id = ?`, [
-        parseInt(req.params.setId),
-        parseInt(req.params.id),
+        parseInt(params.setId, 10),
+        parseInt(params.id, 10),
       ]);
-      reply.send({ ok: true });
-    }
+      return { ok: true };
+    },
+    { params: t.Object({ id: t.String(), setId: t.String() }) }
   );
-}

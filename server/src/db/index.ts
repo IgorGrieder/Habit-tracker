@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import path from "path";
+import path from "node:path";
 
 const DB_PATH = path.join(process.cwd(), "atlas.db");
 
@@ -91,7 +91,7 @@ db.run(`
 
 try {
   db.run(`ALTER TABLE habits ADD COLUMN why TEXT`);
-} catch (_) {
+} catch {
   // column already exists
 }
 
@@ -115,7 +115,7 @@ export function getStreak(habitId: number): number {
 
   const dateSet = new Set(rows.map((r) => r.completed_date));
   let streak = 0;
-  const current = new Date(today + "T12:00:00Z");
+  const current = new Date(`${today}T12:00:00Z`);
 
   if (!dateSet.has(today)) {
     current.setUTCDate(current.getUTCDate() - 1);

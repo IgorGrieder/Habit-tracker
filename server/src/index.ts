@@ -1,31 +1,25 @@
-import Fastify from "fastify";
-import cors from "@fastify/cors";
-import { habitsRoutes } from "./routes/habits.js";
-import { workoutsRoutes } from "./routes/workouts.js";
-import { goalsRoutes } from "./routes/goals.js";
-import { nutritionRoutes } from "./routes/nutrition.js";
-import { dashboardRoutes } from "./routes/dashboard.js";
+import { cors } from "@elysiajs/cors";
+import { Elysia } from "elysia";
 import { achievementsRoutes } from "./routes/achievements.js";
+import { dashboardRoutes } from "./routes/dashboard.js";
+import { goalsRoutes } from "./routes/goals.js";
+import { habitsRoutes } from "./routes/habits.js";
+import { nutritionRoutes } from "./routes/nutrition.js";
 import { recapRoutes } from "./routes/recap.js";
+import { workoutsRoutes } from "./routes/workouts.js";
 
-const app = Fastify({ logger: false });
+const app = new Elysia()
+  .use(cors({ origin: "http://localhost:5173" }))
+  .use(habitsRoutes)
+  .use(workoutsRoutes)
+  .use(goalsRoutes)
+  .use(nutritionRoutes)
+  .use(dashboardRoutes)
+  .use(achievementsRoutes)
+  .use(recapRoutes)
+  .get("/health", () => ({ status: "ok" }))
+  .listen(3000);
 
-await app.register(cors, { origin: "http://localhost:5173" });
+console.log("ATLAS server running on http://localhost:3000");
 
-await app.register(habitsRoutes);
-await app.register(workoutsRoutes);
-await app.register(goalsRoutes);
-await app.register(nutritionRoutes);
-await app.register(dashboardRoutes);
-await app.register(achievementsRoutes);
-await app.register(recapRoutes);
-
-app.get("/health", () => ({ status: "ok" }));
-
-try {
-  await app.listen({ port: 3000, host: "127.0.0.1" });
-  console.log("ATLAS server running on http://localhost:3000");
-} catch (err) {
-  console.error(err);
-  process.exit(1);
-}
+export type App = typeof app;

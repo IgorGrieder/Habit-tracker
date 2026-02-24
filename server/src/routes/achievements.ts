@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import { Elysia } from "elysia";
 import { db, getStreak } from "../db/index.js";
 
 interface AchievementDef {
@@ -145,42 +145,34 @@ const ACHIEVEMENTS: AchievementDef[] = [
 ];
 
 function computeStats(): Stats {
-  const totalRow = db
-    .query<{ cnt: number }, []>("SELECT COUNT(*) as cnt FROM habit_completions")
-    .get();
-  const totalCompletions = totalRow?.cnt ?? 0;
+  const totalCompletions =
+    db.query<{ cnt: number }, []>("SELECT COUNT(*) as cnt FROM habit_completions").get()?.cnt ?? 0;
 
-  const habitRow = db
-    .query<{ cnt: number }, []>("SELECT COUNT(*) as cnt FROM habits")
-    .get();
-  const habitCount = habitRow?.cnt ?? 0;
+  const habitCount =
+    db.query<{ cnt: number }, []>("SELECT COUNT(*) as cnt FROM habits").get()?.cnt ?? 0;
 
-  // Perfect days: days where distinct completed habits === habitCount
   let perfectDays = 0;
   if (habitCount > 0) {
-    const pdRows = db
-      .query<{ cnt: number }, [number]>(
-        `SELECT COUNT(*) as cnt FROM (
-          SELECT completed_date FROM habit_completions
-          GROUP BY completed_date
-          HAVING COUNT(DISTINCT habit_id) = ?
-        )`
-      )
-      .get(habitCount);
-    perfectDays = pdRows?.cnt ?? 0;
+    perfectDays =
+      db
+        .query<{ cnt: number }, [number]>(
+          `SELECT COUNT(*) as cnt FROM (
+            SELECT completed_date FROM habit_completions
+            GROUP BY completed_date
+            HAVING COUNT(DISTINCT habit_id) = ?
+          )`
+        )
+        .get(habitCount)?.cnt ?? 0;
   }
 
-  const activeRow = db
-    .query<{ cnt: number }, []>(
-      "SELECT COUNT(DISTINCT completed_date) as cnt FROM habit_completions"
-    )
-    .get();
-  const activeDays = activeRow?.cnt ?? 0;
+  const activeDays =
+    db
+      .query<{ cnt: number }, []>(
+        "SELECT COUNT(DISTINCT completed_date) as cnt FROM habit_completions"
+      )
+      .get()?.cnt ?? 0;
 
-  // Max current streak across all habits
-  const habits = db
-    .query<{ id: number }, []>("SELECT id FROM habits")
-    .all();
+  const habits = db.query<{ id: number }, []>("SELECT id FROM habits").all();
   let maxStreak = 0;
   for (const h of habits) {
     const s = getStreak(h.id);
@@ -190,42 +182,36 @@ function computeStats(): Stats {
   return { totalCompletions, habitCount, perfectDays, activeDays, maxStreak };
 }
 
-export async function achievementsRoutes(app: FastifyInstance) {
-  app.get("/api/achievements", () => {
-    const stats = computeStats();
+export const achievementsRoutes = new Elysia().get("/api/achievements", () => {
+  const stats = computeStats();
 
-    const existingUnlocks = db
-      .query<{ id: string; unlocked_at: string }, []>(
-        "SELECT id, unlocked_at FROM achievement_unlocks"
-      )
-      .all();
-    const unlockMap = new Map(existingUnlocks.map((r) => [r.id, r.unlocked_at]));
+  const existingUnlocks = db
+    .query<{ id: string; unlocked_at: string }, []>(
+      "SELECT id, unlocked_at FROM achievement_unlocks"
+    )
+    .all();
+  const unlockMap = new Map(existingUnlocks.map((r) => [r.id, r.unlocked_at]));
+  const insert = db.prepare("INSERT OR IGNORE INTO achievement_unlocks (id) VALUES (?)");
 
-    const insert = db.prepare(
-      "INSERT OR IGNORE INTO achievement_unlocks (id) VALUES (?)"
-    );
-
-    return ACHIEVEMENTS.map((a) => {
-      const isUnlocked = a.check(stats);
-      if (isUnlocked && !unlockMap.has(a.id)) {
-        insert.run(a.id);
-        // fetch the just-inserted timestamp
-        const row = db
-          .query<{ unlocked_at: string }, [string]>(
-            "SELECT unlocked_at FROM achievement_unlocks WHERE id = ?"
-          )
-          .get(a.id);
-        unlockMap.set(a.id, row?.unlocked_at ?? new Date().toISOString());
-      }
-      return {
-        id: a.id,
-        title: a.title,
-        desc: a.desc,
-        icon: a.icon,
-        category: a.category,
-        unlocked: isUnlocked,
-        unlockedAt: isUnlocked ? (unlockMap.get(a.id) ?? null) : null,
-      };
-    });
+  return ACHIEVEMENTS.map((a) => {
+    const isUnlocked = a.check(stats);
+    if (isUnlocked && !unlockMap.has(a.id)) {
+      insert.run(a.id);
+      const row = db
+        .query<{ unlocked_at: string }, [string]>(
+          "SELECT unlocked_at FROM achievement_unlocks WHERE id = ?"
+        )
+        .get(a.id);
+      unlockMap.set(a.id, row?.unlocked_at ?? new Date().toISOString());
+    }
+    return {
+      id: a.id,
+      title: a.title,
+      desc: a.desc,
+      icon: a.icon,
+      category: a.category,
+      unlocked: isUnlocked,
+      unlockedAt: isUnlocked ? (unlockMap.get(a.id) ?? null) : null,
+    };
   });
-}
+});

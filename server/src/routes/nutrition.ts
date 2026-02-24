@@ -1,21 +1,40 @@
-import type { FastifyInstance } from "fastify";
+import { Elysia, t } from "elysia";
 import { db } from "../db/index.js";
 
-export async function nutritionRoutes(app: FastifyInstance) {
+export const nutritionRoutes = new Elysia()
   // Get today's or a specific date's log
-  app.get<{ Querystring: { date?: string } }>("/api/nutrition", (req) => {
-    const date = req.query.date ?? new Date().toISOString().split("T")[0];
-    const row = db
-      .query<{ id: number; date: string; calories: number; protein_g: number; carbs_g: number; fat_g: number; notes: string | null }, [string]>(
-        `SELECT * FROM nutrition_logs WHERE date = ?`
-      )
-      .get(date);
-    return row ?? { date, calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, notes: null };
-  });
+  .get(
+    "/api/nutrition",
+    ({ query }) => {
+      const date = query.date ?? new Date().toISOString().split("T")[0];
+      const row = db
+        .query<
+          {
+            id: number;
+            date: string;
+            calories: number;
+            protein_g: number;
+            carbs_g: number;
+            fat_g: number;
+            notes: string | null;
+          },
+          [string]
+        >(`SELECT * FROM nutrition_logs WHERE date = ?`)
+        .get(date);
+      return row ?? { date, calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, notes: null };
+    },
+    { query: t.Object({ date: t.Optional(t.String()) }) }
+  )
 
   // Get last 7 days
-  app.get("/api/nutrition/week", () => {
-    const result: { date: string; calories: number; protein_g: number; carbs_g: number; fat_g: number }[] = [];
+  .get("/api/nutrition/week", () => {
+    const result: {
+      date: string;
+      calories: number;
+      protein_g: number;
+      carbs_g: number;
+      fat_g: number;
+    }[] = [];
     const cur = new Date();
     for (let i = 6; i >= 0; i--) {
       const d = new Date(cur);
@@ -26,34 +45,18 @@ export async function nutritionRoutes(app: FastifyInstance) {
           `SELECT calories, protein_g, carbs_g, fat_g FROM nutrition_logs WHERE date = ?`
         )
         .get(date);
-      result.push(row ? { date, ...row } : { date, calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 });
+      result.push(
+        row ? { date, ...row } : { date, calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 }
+      );
     }
     return result;
-  });
+  })
 
   // Upsert a day's nutrition
-  app.put<{
-    Params: { date: string };
-    Body: { calories?: number; protein_g?: number; carbs_g?: number; fat_g?: number; notes?: string };
-  }>(
+  .put(
     "/api/nutrition/:date",
-    {
-      schema: {
-        body: {
-          type: "object",
-          properties: {
-            calories: { type: "number" },
-            protein_g: { type: "number" },
-            carbs_g: { type: "number" },
-            fat_g: { type: "number" },
-            notes: { type: "string" },
-          },
-        },
-      },
-    },
-    (req, reply) => {
-      const { date } = req.params;
-      const { calories = 0, protein_g = 0, carbs_g = 0, fat_g = 0, notes } = req.body;
+    ({ params, body }) => {
+      const { calories = 0, protein_g = 0, carbs_g = 0, fat_g = 0, notes } = body;
       db.run(
         `INSERT INTO nutrition_logs (date, calories, protein_g, carbs_g, fat_g, notes)
          VALUES (?, ?, ?, ?, ?, ?)
@@ -63,9 +66,18 @@ export async function nutritionRoutes(app: FastifyInstance) {
            carbs_g = excluded.carbs_g,
            fat_g = excluded.fat_g,
            notes = excluded.notes`,
-        [date, calories, protein_g, carbs_g, fat_g, notes ?? null]
+        [params.date, calories, protein_g, carbs_g, fat_g, notes ?? null]
       );
-      reply.send({ ok: true });
+      return { ok: true };
+    },
+    {
+      params: t.Object({ date: t.String() }),
+      body: t.Object({
+        calories: t.Optional(t.Number()),
+        protein_g: t.Optional(t.Number()),
+        carbs_g: t.Optional(t.Number()),
+        fat_g: t.Optional(t.Number()),
+        notes: t.Optional(t.String()),
+      }),
     }
   );
-}
