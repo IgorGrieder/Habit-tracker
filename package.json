@@ -5,9 +5,13 @@
   "scripts": {
     "dev": "concurrently \"bun run --cwd server dev\" \"bun run --cwd client dev\"",
     "build": "bun run --cwd client build",
-    "start": "bun run --cwd server start"
+    "start": "bun run --cwd server start",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check --write ."
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.4",
     "concurrently": "^8.2.2"
   }
 }
