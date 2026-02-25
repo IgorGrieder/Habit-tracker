@@ -20,18 +20,27 @@ export const getDashboard = () => req<DashboardData>("/dashboard");
 
 // Habits
 export const getHabits = () => req<Habit[]>("/habits");
-export const createHabit = (body: { name: string; color: string; icon: string; why?: string }) =>
-  req<Habit>("/habits", { method: "POST", body: JSON.stringify(body) });
-export const deleteHabit = (id: number) =>
+export const createHabit = (body: {
+  name: string;
+  color: string;
+  icon: string;
+  why?: string;
+  schedule?: string;
+}) => req<Habit>("/habits", { method: "POST", body: JSON.stringify(body) });
+export const deleteHabit = (id: string) =>
   req<{ ok: boolean }>(`/habits/${id}`, { method: "DELETE" });
-export const updateHabitWhy = (id: number, why: string) =>
+export const updateHabitWhy = (id: string, why: string) =>
   req<{ ok: boolean }>(`/habits/${id}`, { method: "PATCH", body: JSON.stringify({ why }) });
-export const completeHabit = (id: number) =>
+export const updateHabitSchedule = (id: string, schedule: string) =>
+  req<{ ok: boolean }>(`/habits/${id}`, { method: "PATCH", body: JSON.stringify({ schedule }) });
+export const completeHabit = (id: string) =>
   req<{ ok: boolean }>(`/habits/${id}/complete`, { method: "POST" });
-export const uncompleteHabit = (id: number) =>
+export const uncompleteHabit = (id: string) =>
   req<{ ok: boolean }>(`/habits/${id}/complete`, { method: "DELETE" });
-export const getHabitHistory = (id: number, days = 28) =>
-  req<{ date: string; completed: boolean }[]>(`/habits/${id}/history?days=${days}`);
+export const getHabitHistory = (id: string, days = 28) =>
+  req<{ date: string; completed: boolean; scheduled: boolean }[]>(
+    `/habits/${id}/history?days=${days}`
+  );
 export const getHabitsCalendar = (days = 28) =>
   req<{ date: string; completed: number; total: number; pct: number }[]>(
     `/habits/calendar?days=${days}`
@@ -40,25 +49,25 @@ export const getHabitsCalendar = (days = 28) =>
 // Workouts
 export const getSessions = () => req<WorkoutSession[]>("/sessions");
 export const createSession = (body: { date?: string; notes?: string }) =>
-  req<{ id: number; date: string; notes: string | null }>("/sessions", {
+  req<{ id: string; date: string; notes: string | null }>("/sessions", {
     method: "POST",
     body: JSON.stringify(body),
   });
-export const deleteSession = (id: number) =>
+export const deleteSession = (id: string) =>
   req<{ ok: boolean }>(`/sessions/${id}`, { method: "DELETE" });
 export const addSets = (
-  sessionId: number,
+  sessionId: string,
   body: { exercise_name: string; muscle_group?: string; sets: { reps: number; weight_kg: number }[] }
 ) =>
   req<{ exercise_name: string; sets: WorkoutSet[] }>(`/sessions/${sessionId}/sets`, {
     method: "POST",
     body: JSON.stringify(body),
   });
-export const deleteSet = (sessionId: number, setId: number) =>
+export const deleteSet = (sessionId: string, setId: string) =>
   req<{ ok: boolean }>(`/sessions/${sessionId}/sets/${setId}`, { method: "DELETE" });
 export const getExercises = () =>
-  req<{ id: number; name: string; muscle_group: string | null }[]>("/exercises");
-export const getExerciseProgress = (id: number) =>
+  req<{ id: string; name: string; muscle_group: string | null }[]>("/exercises");
+export const getExerciseProgress = (id: string) =>
   req<{ date: string; max_weight: number; total_reps: number }[]>(`/exercises/${id}/progress`);
 
 // Goals
@@ -66,19 +75,19 @@ export const getGoals = () => req<Goal[]>("/goals");
 export const createGoal = (body: { title: string; description?: string; target_date?: string }) =>
   req<Goal>("/goals", { method: "POST", body: JSON.stringify(body) });
 export const updateGoal = (
-  id: number,
+  id: string,
   body: { title?: string; description?: string; target_date?: string; status?: string }
 ) => req<{ ok: boolean }>(`/goals/${id}`, { method: "PATCH", body: JSON.stringify(body) });
-export const deleteGoal = (id: number) =>
+export const deleteGoal = (id: string) =>
   req<{ ok: boolean }>(`/goals/${id}`, { method: "DELETE" });
-export const addMilestone = (goalId: number, title: string) =>
+export const addMilestone = (goalId: string, title: string) =>
   req<Milestone>(`/goals/${goalId}/milestones`, {
     method: "POST",
     body: JSON.stringify({ title }),
   });
-export const toggleMilestone = (goalId: number, milestoneId: number) =>
+export const toggleMilestone = (goalId: string, milestoneId: string) =>
   req<{ ok: boolean }>(`/goals/${goalId}/milestones/${milestoneId}`, { method: "PATCH" });
-export const deleteMilestone = (goalId: number, milestoneId: number) =>
+export const deleteMilestone = (goalId: string, milestoneId: string) =>
   req<{ ok: boolean }>(`/goals/${goalId}/milestones/${milestoneId}`, { method: "DELETE" });
 
 // Achievements
@@ -99,18 +108,20 @@ export const saveNutrition = (date: string, body: Partial<NutritionLog>) =>
 
 // Types
 export interface Habit {
-  id: number;
+  id: string;
   name: string;
   color: string;
   icon: string;
   why: string | null;
+  schedule: string;
+  scheduledToday: boolean;
   created_at: string;
   completedToday: boolean;
   streak: number;
 }
 
 export interface WorkoutSet {
-  id: number;
+  id: string;
   set_number: number;
   reps: number;
   weight_kg: number;
@@ -124,7 +135,7 @@ export interface WorkoutExercise {
 }
 
 export interface WorkoutSession {
-  id: number;
+  id: string;
   date: string;
   notes: string | null;
   exercises: WorkoutExercise[];
@@ -133,15 +144,15 @@ export interface WorkoutSession {
 }
 
 export interface Milestone {
-  id: number;
-  goal_id: number;
+  id: string;
+  goal_id: string;
   title: string;
   completed_at: string | null;
   position: number;
 }
 
 export interface Goal {
-  id: number;
+  id: string;
   title: string;
   description: string | null;
   target_date: string | null;
@@ -203,7 +214,7 @@ export interface DashboardData {
   habitsDoneToday: number;
   totalHabits: number;
   lastWorkout: {
-    id: number;
+    id: string;
     date: string;
     notes: string | null;
     exerciseNames: string[];
@@ -211,7 +222,7 @@ export interface DashboardData {
     prCount: number;
   } | null;
   goals: {
-    id: number;
+    id: string;
     title: string;
     status: string;
     target_date: string | null;
