@@ -1,5 +1,6 @@
 import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
+import { connectDB } from "./db/mongoose.js";
 import { achievementsRoutes } from "./routes/achievements.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 import { goalsRoutes } from "./routes/goals.js";
@@ -7,6 +8,9 @@ import { habitsRoutes } from "./routes/habits.js";
 import { nutritionRoutes } from "./routes/nutrition.js";
 import { recapRoutes } from "./routes/recap.js";
 import { workoutsRoutes } from "./routes/workouts.js";
+
+await connectDB();
+console.log("Connected to MongoDB Atlas");
 
 const app = new Elysia()
   .use(cors({ origin: "http://localhost:5173" }))
