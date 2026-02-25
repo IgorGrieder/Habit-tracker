@@ -1,17 +1,4 @@
 import { useState, useRef } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  getHabits,
-  createHabit,
-  deleteHabit,
-  updateHabitWhy,
-  completeHabit,
-  uncompleteHabit,
-  getHabitHistory,
-  getHabitsCalendar,
-  type Habit,
-} from "../lib/api";
-import { Check, Plus, Trash2, X, ChevronDown, ChevronRight, TrendingUp, Pencil } from "lucide-react";
 import {
   BarChart,
   Bar,
@@ -20,6 +7,20 @@ import {
   ResponsiveContainer,
   Cell,
 } from "recharts";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  getHabits,
+  createHabit,
+  deleteHabit,
+  updateHabitWhy,
+  updateHabitSchedule,
+  completeHabit,
+  uncompleteHabit,
+  getHabitHistory,
+  getHabitsCalendar,
+  type Habit,
+} from "../lib/api";
+import { Check, Plus, Trash2, X, ChevronDown, ChevronRight, TrendingUp, Pencil } from "lucide-react";
 import { formatShortDate, dayOfWeek } from "../lib/utils";
 
 const ICONS = ["⚡", "🏃", "📚", "💧", "🧘", "🎯", "💪", "🥗", "😴", "🧠", "🎵", "✍️"];
@@ -33,6 +34,13 @@ const RANGES = [
   { label: "30d", days: 30 },
   { label: "90d", days: 90 },
 ] as const;
+
+const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"] as const;
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+
+function parseScheduleClient(s: string): Set<number> {
+  return new Set(s.split(",").map(Number));
+}
 
 // ── Aggregate completion chart with time-range selector ───────────────────────
 function HabitsCompletionChart() {
@@ -297,9 +305,9 @@ function TodayCheckIn({
   onToggle,
 }: {
   habits: Habit[];
-  onToggle: (id: number, done: boolean) => void;
+  onToggle: (id: string, done: boolean) => void;
 }) {
-  const [hoveredId, setHoveredId] = useState<number | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [tooltipAnchor, setTooltipAnchor] = useState<{ x: number; y: number } | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const done = habits.filter((h) => h.completedToday).length;
@@ -567,7 +575,15 @@ export default function Habits() {
   const [icon, setIcon] = useState("⚡");
   const [color, setColor] = useState("#15803d");
   const [why, setWhy] = useState("");
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [scheduleDays, setScheduleDays] = useState<number[]>(ALL_DAYS);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const toggleScheduleDay = (day: number) => {
+    if (scheduleDays.includes(day) && scheduleDays.length === 1) return;
+    setScheduleDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b)
+    );
+  };
 
   const { data: habits = [] } = useQuery({
     queryKey: ["habits"],
@@ -575,7 +591,14 @@ export default function Habits() {
   });
 
   const createMut = useMutation({
-    mutationFn: () => createHabit({ name, icon, color, why: why.trim() || undefined }),
+    mutationFn: () =>
+      createHabit({
+        name,
+        icon,
+        color,
+        why: why.trim() || undefined,
+        schedule: scheduleDays.join(","),
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["habits"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
@@ -585,6 +608,7 @@ export default function Habits() {
       setIcon("⚡");
       setColor("#15803d");
       setWhy("");
+      setScheduleDays(ALL_DAYS);
     },
   });
 
@@ -598,7 +622,7 @@ export default function Habits() {
   });
 
   const toggleMut = useMutation({
-    mutationFn: ({ id, done }: { id: number; done: boolean }) =>
+    mutationFn: ({ id, done }: { id: string; done: boolean }) =>
       done ? uncompleteHabit(id) : completeHabit(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["habits"] });
@@ -637,8 +661,8 @@ export default function Habits() {
               marginTop: 4,
             }}
           >
-            {habits.filter((h) => h.completedToday).length} /{" "}
-            {habits.length} completed today
+            {habits.filter((h) => h.scheduledToday && h.completedToday).length} /{" "}
+            {habits.filter((h) => h.scheduledToday).length} completed today
           </div>
         </div>
         <button className="btn btn-green" onClick={() => setShowForm(true)}>
@@ -646,9 +670,9 @@ export default function Habits() {
         </button>
       </div>
 
-      {/* Today check-in */}
+      {/* Today check-in — only habits scheduled for today */}
       <TodayCheckIn
-        habits={habits}
+        habits={habits.filter((h) => h.scheduledToday)}
         onToggle={(id, done) => toggleMut.mutate({ id, done })}
       />
 
@@ -690,7 +714,13 @@ export default function Habits() {
 
       {/* New Habit Modal */}
       {showForm && (
-        <div className="modal-backdrop" onClick={() => setShowForm(false)}>
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            setShowForm(false);
+            setScheduleDays(ALL_DAYS);
+          }}
+        >
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div
               style={{
@@ -710,7 +740,10 @@ export default function Habits() {
                 New Habit
               </span>
               <button
-                onClick={() => setShowForm(false)}
+                onClick={() => {
+                  setShowForm(false);
+                  setScheduleDays(ALL_DAYS);
+                }}
                 style={{
                   background: "none",
                   border: "none",
@@ -864,11 +897,57 @@ export default function Habits() {
                 </div>
               </div>
 
+              <div>
+                <label
+                  style={{
+                    fontSize: 11,
+                    color: "var(--text-muted)",
+                    fontWeight: 600,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    display: "block",
+                    marginBottom: 8,
+                  }}
+                >
+                  Schedule
+                </label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {DAY_LETTERS.map((letter, idx) => {
+                    const selected = scheduleDays.includes(idx);
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => toggleScheduleDay(idx)}
+                        style={{
+                          width: 36,
+                          height: 36,
+                          borderRadius: 8,
+                          border: `1.5px solid ${selected ? "var(--green)" : "var(--border)"}`,
+                          background: selected ? "var(--green-dim)" : "var(--bg-elevated)",
+                          color: selected ? "var(--green)" : "var(--text-dim)",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          fontFamily: '"JetBrains Mono", monospace',
+                          cursor: "pointer",
+                          transition: "all 0.12s",
+                        }}
+                      >
+                        {letter}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                 <button
                   className="btn btn-ghost"
                   style={{ flex: 1 }}
-                  onClick={() => setShowForm(false)}
+                  onClick={() => {
+                    setShowForm(false);
+                    setScheduleDays(ALL_DAYS);
+                  }}
                 >
                   Cancel
                 </button>
@@ -906,6 +985,8 @@ function HabitRow({
   const qc = useQueryClient();
   const [editingWhy, setEditingWhy] = useState(false);
   const [whyDraft, setWhyDraft] = useState(habit.why ?? "");
+  const [editingSchedule, setEditingSchedule] = useState(false);
+  const [scheduleDraft, setScheduleDraft] = useState<number[]>([]);
 
   const whyMut = useMutation({
     mutationFn: (val: string) => updateHabitWhy(habit.id, val),
@@ -914,6 +995,23 @@ function HabitRow({
       setEditingWhy(false);
     },
   });
+
+  const scheduleMut = useMutation({
+    mutationFn: (schedule: string) => updateHabitSchedule(habit.id, schedule),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["habits"] });
+      qc.invalidateQueries({ queryKey: ["habit-history", habit.id] });
+      qc.invalidateQueries({ queryKey: ["habits-calendar"] });
+      setEditingSchedule(false);
+    },
+  });
+
+  const toggleScheduleDraftDay = (day: number) => {
+    if (scheduleDraft.includes(day) && scheduleDraft.length === 1) return;
+    setScheduleDraft((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b)
+    );
+  };
 
   const { data: history } = useQuery({
     queryKey: ["habit-history", habit.id],
@@ -1147,103 +1245,216 @@ function HabitRow({
             )}
           </div>
 
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 600,
-              color: "var(--text-dim)",
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              margin: "0 0 10px",
-            }}
-          >
+          {/* Schedule section */}
+          <div style={{ margin: "0 0 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7 }}>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "var(--text-dim)",
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                }}
+              >
+                Schedule
+              </span>
+              {!editingSchedule && (
+                <button
+                  onClick={() => {
+                    setScheduleDraft(
+                      Array.from(parseScheduleClient(habit.schedule ?? "0,1,2,3,4,5,6")).sort(
+                        (a, b) => a - b
+                      )
+                    );
+                    setEditingSchedule(true);
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--text-dim)",
+                    padding: "1px 4px",
+                    borderRadius: 4,
+                    display: "flex",
+                    alignItems: "center",
+                  }}
+                  title="Edit schedule"
+                >
+                  <Pencil size={11} />
+                </button>
+              )}
+            </div>
+
+            {editingSchedule ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", gap: 5 }}>
+                  {DAY_LETTERS.map((letter, idx) => {
+                    const selected = scheduleDraft.includes(idx);
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => toggleScheduleDraftDay(idx)}
+                        style={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: 8,
+                          border: `1.5px solid ${selected ? "var(--green)" : "var(--border)"}`,
+                          background: selected ? "var(--green-dim)" : "var(--bg-elevated)",
+                          color: selected ? "var(--green)" : "var(--text-dim)",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          fontFamily: '"JetBrains Mono", monospace',
+                          cursor: "pointer",
+                          transition: "all 0.12s",
+                        }}
+                      >
+                        {letter}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 12, padding: "5px 12px" }}
+                    onClick={() => setEditingSchedule(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-green"
+                    style={{ fontSize: 12, padding: "5px 14px" }}
+                    disabled={scheduleMut.isPending}
+                    onClick={() => scheduleMut.mutate(scheduleDraft.join(","))}
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 4 }}>
+                {DAY_LETTERS.map((letter, idx) => {
+                  const scheduled = parseScheduleClient(habit.schedule ?? "0,1,2,3,4,5,6").has(
+                    idx
+                  );
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: 6,
+                        border: `1.5px solid ${scheduled ? `${habit.color}60` : "var(--border)"}`,
+                        background: scheduled ? `${habit.color}20` : "transparent",
+                        color: scheduled ? habit.color : "var(--text-dim)",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        fontFamily: '"JetBrains Mono", monospace',
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        opacity: scheduled ? 1 : 0.4,
+                      }}
+                    >
+                      {letter}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div style={{ fontSize: 9, fontWeight: 600, color: "var(--text-dim)", letterSpacing: "0.1em", textTransform: "uppercase", margin: "0 0 8px" }}>
             Last 28 Days
           </div>
 
           {history ? (
             <>
-              {/* Day-of-week header */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(7, 1fr)",
-                  gap: 4,
-                  marginBottom: 4,
-                }}
-              >
-                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-                  <div
-                    key={d}
-                    style={{
-                      fontSize: 9,
-                      color: "var(--text-dim)",
-                      textAlign: "center",
-                      fontFamily: '"JetBrains Mono", monospace',
-                    }}
-                  >
+              {/* Day-of-week header — single letters, compact */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 13px)", gap: 3, marginBottom: 3 }}>
+                {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+                  <div key={i} style={{
+                    width: 13, height: 13,
+                    fontSize: 8,
+                    color: "var(--text-dim)",
+                    textAlign: "center",
+                    fontFamily: '"JetBrains Mono", monospace',
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
                     {d}
                   </div>
                 ))}
               </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(7, 1fr)",
-                  gap: 4,
-                }}
-              >
+
+              {/* 28-day dot grid — fixed 13px cells */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 13px)", gridAutoRows: "13px", gap: 3 }}>
+                {/* Padding to align oldest date to correct weekday */}
+                {Array.from({ length: new Date(history[0].date + "T12:00:00Z").getUTCDay() }).map((_, i) => (
+                  <div key={`pad-${i}`} style={{ width: 13, height: 13 }} />
+                ))}
                 {history.map((day) => {
-                  const isToday =
-                    day.date === new Date().toISOString().split("T")[0];
+                  const isToday = day.date === new Date().toISOString().split("T")[0];
+                  const isOffDay = !day.scheduled;
                   return (
                     <div
                       key={day.date}
-                      title={`${day.date}: ${day.completed ? "✓" : "—"}`}
+                      title={isOffDay ? `${day.date}: rest` : `${day.date}: ${day.completed ? "✓" : "—"}`}
                       style={{
-                        aspectRatio: "1",
-                        borderRadius: 4,
-                        background: day.completed
-                          ? habit.color
-                          : "var(--bg-elevated)",
+                        width: 13,
+                        height: 13,
+                        borderRadius: 3,
+                        background: day.completed ? habit.color : isOffDay ? "transparent" : "var(--bg-elevated)",
                         border: isToday
                           ? `1.5px solid ${habit.color}`
-                          : "1px solid var(--border)",
-                        opacity: day.completed ? 1 : 0.5,
-                        transition: "all 0.12s",
-                        minHeight: 16,
+                          : isOffDay ? "1px dashed var(--border)" : "1px solid var(--border)",
+                        opacity: day.completed ? 1 : isOffDay ? 0.3 : 0.45,
+                        transition: "opacity 0.1s",
+                        flexShrink: 0,
                       }}
                     />
                   );
                 })}
               </div>
-              {/* Stats row */}
-              <div
-                style={{
-                  display: "flex",
-                  gap: 20,
-                  marginTop: 12,
-                  paddingTop: 10,
-                  borderTop: "1px solid var(--border)",
-                }}
-              >
-                <Stat
-                  label="Completed"
-                  value={history.filter((d) => d.completed).length}
-                  suffix="/28"
-                />
-                <Stat
-                  label="Rate"
-                  value={Math.round(
-                    (history.filter((d) => d.completed).length / 28) * 100
-                  )}
-                  suffix="%"
-                />
-                <Stat label="Streak" value={habit.streak} suffix="d" />
-              </div>
+
+              {/* Compact inline stats strip */}
+              {(() => {
+                const scheduledCount = history.filter((d) => d.scheduled).length;
+                const completedCount = history.filter((d) => d.completed).length;
+                const rate = scheduledCount > 0 ? Math.round((completedCount / scheduledCount) * 100) : 0;
+                return (
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    marginTop: 10,
+                    paddingTop: 8,
+                    borderTop: "1px solid var(--border)",
+                    fontFamily: '"JetBrains Mono", monospace',
+                    fontSize: 11,
+                  }}>
+                    <span style={{ color: "var(--text-dim)", fontSize: 8, letterSpacing: "0.1em" }}>DONE</span>
+                    <span style={{ fontWeight: 700, color: "var(--text)" }}>
+                      {completedCount}<span style={{ color: "var(--text-dim)", fontWeight: 400 }}>/{scheduledCount}</span>
+                    </span>
+                    <span style={{ color: "var(--border)" }}>·</span>
+                    <span style={{ color: "var(--text-dim)", fontSize: 8, letterSpacing: "0.1em" }}>RATE</span>
+                    <span style={{ fontWeight: 700, color: rate >= 80 ? "var(--green)" : "var(--text)" }}>{rate}%</span>
+                    {habit.streak > 0 && (
+                      <>
+                        <span style={{ color: "var(--border)" }}>·</span>
+                        <span className="streak-fire" style={{ fontSize: 11 }}>🔥</span>
+                        <span style={{ fontWeight: 700, color: "var(--amber)" }}>{habit.streak}d</span>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
             </>
           ) : (
-            <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
-              Loading...
+            <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "8px 0" }}>
+              Loading…
             </div>
           )}
         </div>
@@ -1252,37 +1463,3 @@ function HabitRow({
   );
 }
 
-function Stat({
-  label,
-  value,
-  suffix,
-}: {
-  label: string;
-  value: number;
-  suffix: string;
-}) {
-  return (
-    <div>
-      <div
-        style={{
-          fontSize: 10,
-          color: "var(--text-dim)",
-          textTransform: "uppercase",
-          letterSpacing: "0.08em",
-          marginBottom: 2,
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
-        <span
-          className="stat-number"
-          style={{ fontSize: 18, color: "var(--text)" }}
-        >
-          {value}
-        </span>
-        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{suffix}</span>
-      </div>
-    </div>
-  );
-}

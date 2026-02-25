@@ -21,8 +21,8 @@ import {
 
 export default function Workout() {
   const qc = useQueryClient();
-  const [activeSession, setActiveSession] = useState<number | null>(null);
-  const [expandedSession, setExpandedSession] = useState<number | null>(null);
+  const [activeSession, setActiveSession] = useState<string | null>(null);
+  const [expandedSession, setExpandedSession] = useState<string | null>(null);
   const [showNewSession, setShowNewSession] = useState(false);
   const [sessionDate, setSessionDate] = useState(new Date().toISOString().split("T")[0]);
   const [sessionNotes, setSessionNotes] = useState("");

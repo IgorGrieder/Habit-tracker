@@ -49,7 +49,7 @@ export default function Goals() {
   });
 
   const updateMut = useMutation({
-    mutationFn: ({ id, body }: { id: number; body: Parameters<typeof updateGoal>[1] }) =>
+    mutationFn: ({ id, body }: { id: string; body: Parameters<typeof updateGoal>[1] }) =>
       updateGoal(id, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["goals"] });
@@ -229,7 +229,7 @@ function GoalCard({
   });
 
   const toggleMut = useMutation({
-    mutationFn: (milestoneId: number) => toggleMilestone(goal.id, milestoneId),
+    mutationFn: (milestoneId: string) => toggleMilestone(goal.id, milestoneId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["goals"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
@@ -237,7 +237,7 @@ function GoalCard({
   });
 
   const deleteMilestoneMut = useMutation({
-    mutationFn: (milestoneId: number) => deleteMilestone(goal.id, milestoneId),
+    mutationFn: (milestoneId: string) => deleteMilestone(goal.id, milestoneId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["goals"] });
     },

@@ -25,7 +25,7 @@ export default function Dashboard() {
   });
 
   const toggleHabit = useMutation({
-    mutationFn: ({ id, done }: { id: number; done: boolean }) =>
+    mutationFn: ({ id, done }: { id: string; done: boolean }) =>
       done ? uncompleteHabit(id) : completeHabit(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["dashboard"] });
