@@ -1,61 +1,64 @@
 import { Elysia, t } from "elysia";
-import { db, getStreak } from "../db/index.js";
+import { HabitModel } from "../db/mongoose.js";
+import { dateBR, getDayOfWeekForDate, getStreak, parseSchedule, todayBR } from "../db/index.js";
 
 export const habitsRoutes = new Elysia()
   // List all habits with today's status + streak
-  .get("/api/habits", () => {
-    const today = new Date().toISOString().split("T")[0];
-    const habits = db
-      .query<
-        {
-          id: number;
-          name: string;
-          color: string;
-          icon: string;
-          why: string | null;
-          created_at: string;
-        },
-        []
-      >(`SELECT * FROM habits ORDER BY created_at ASC`)
-      .all();
+  .get("/api/habits", async () => {
+    const today = todayBR();
+    const todayDow = getDayOfWeekForDate(today);
+    const habits = await HabitModel.find().sort({ created_at: 1 }).lean();
 
     return habits.map((h) => {
-      const completion = db
-        .query<{ id: number }, [number, string]>(
-          `SELECT id FROM habit_completions WHERE habit_id = ? AND completed_date = ?`
-        )
-        .get(h.id, today);
-      return { ...h, completedToday: !!completion, streak: getStreak(h.id) };
+      const completions: string[] = h.completions ?? [];
+      const scheduledDays = parseSchedule(h.schedule ?? "0,1,2,3,4,5,6");
+      return {
+        id: h._id.toString(),
+        name: h.name,
+        color: h.color,
+        icon: h.icon,
+        why: h.why ?? null,
+        schedule: h.schedule ?? "0,1,2,3,4,5,6",
+        created_at: h.created_at,
+        completedToday: completions.includes(today),
+        streak: getStreak(h.schedule ?? "0,1,2,3,4,5,6", completions),
+        scheduledToday: scheduledDays.has(todayDow),
+      };
     });
   })
 
-  // Aggregate calendar — per-day completion % across all habits
-  // Must be registered before /:id to avoid param collision
+  // Aggregate calendar — per-day completion % across scheduled habits
   .get(
     "/api/habits/calendar",
-    ({ query }) => {
+    async ({ query }) => {
       const days = parseInt(query.days ?? "28", 10);
-      const habitCount =
-        db.query<{ c: number }, []>(`SELECT COUNT(*) as c FROM habits`).get()?.c ?? 0;
+      const habits = await HabitModel.find({}, "schedule completions").lean();
+
+      const habitSchedules = habits.map((h) => ({
+        scheduleDays: parseSchedule(h.schedule ?? "0,1,2,3,4,5,6"),
+        completions: new Set<string>(h.completions ?? []),
+      }));
 
       const result: { date: string; completed: number; total: number; pct: number }[] = [];
-      const cur = new Date();
 
       for (let i = days - 1; i >= 0; i--) {
-        const d = new Date(cur);
-        d.setUTCDate(d.getUTCDate() - i);
-        const date = d.toISOString().split("T")[0];
-        const completed =
-          db
-            .query<{ c: number }, [string]>(
-              `SELECT COUNT(DISTINCT habit_id) as c FROM habit_completions WHERE completed_date = ?`
-            )
-            .get(date)?.c ?? 0;
+        const date = dateBR(i);
+        const dow = getDayOfWeekForDate(date);
+
+        const scheduled = habitSchedules.filter((h) => h.scheduleDays.has(dow));
+        const total = scheduled.length;
+
+        if (total === 0) {
+          result.push({ date, completed: 0, total: 0, pct: 0 });
+          continue;
+        }
+
+        const completed = scheduled.filter((h) => h.completions.has(date)).length;
         result.push({
           date,
           completed,
-          total: habitCount,
-          pct: habitCount > 0 ? Math.round((completed / habitCount) * 100) : 0,
+          total,
+          pct: Math.round((completed / total) * 100),
         });
       }
       return result;
@@ -66,24 +69,17 @@ export const habitsRoutes = new Elysia()
   // Get history (last N days) for a habit
   .get(
     "/api/habits/:id/history",
-    ({ params, query }) => {
+    async ({ params, query }) => {
       const days = parseInt(query.days ?? "28", 10);
-      const rows = db
-        .query<{ completed_date: string }, [number]>(
-          `SELECT completed_date FROM habit_completions
-           WHERE habit_id = ?
-           ORDER BY completed_date DESC
-           LIMIT 90`
-        )
-        .all(parseInt(params.id, 10));
-      const dateSet = new Set(rows.map((r) => r.completed_date));
+      const habit = await HabitModel.findById(params.id).lean();
+      const scheduledDays = parseSchedule(habit?.schedule ?? "0,1,2,3,4,5,6");
+      const dateSet = new Set<string>(habit?.completions ?? []);
 
-      const result: { date: string; completed: boolean }[] = [];
-      const cur = new Date();
+      const result: { date: string; completed: boolean; scheduled: boolean }[] = [];
       for (let i = 0; i < days; i++) {
-        const d = cur.toISOString().split("T")[0];
-        result.unshift({ date: d, completed: dateSet.has(d) });
-        cur.setDate(cur.getDate() - 1);
+        const d = dateBR(i);
+        const dow = getDayOfWeekForDate(d);
+        result.unshift({ date: d, completed: dateSet.has(d), scheduled: scheduledDays.has(dow) });
       }
       return result;
     },
@@ -96,27 +92,28 @@ export const habitsRoutes = new Elysia()
   // Create habit
   .post(
     "/api/habits",
-    ({ body }) => {
-      const { name, color = "#e8b04b", icon = "⚡", why } = body;
-      const result = db
-        .query<{ id: number }, [string, string, string, string | null]>(
-          `INSERT INTO habits (name, color, icon, why) VALUES (?, ?, ?, ?) RETURNING id`
-        )
-        .get(name, color, icon, why ?? null);
-      const habit = db
-        .query<
-          {
-            id: number;
-            name: string;
-            color: string;
-            icon: string;
-            why: string | null;
-            created_at: string;
-          },
-          [number]
-        >(`SELECT * FROM habits WHERE id = ?`)
-        .get(result!.id);
-      return { ...habit, completedToday: false, streak: 0 };
+    async ({ body }) => {
+      const { name, color = "#e8b04b", icon = "⚡", why, schedule = "0,1,2,3,4,5,6" } = body;
+      const created_at = todayBR();
+      const doc = { name, color, icon, why: why ?? null, schedule, created_at, completions: [] };
+      const result = await HabitModel.create(doc);
+
+      const today = todayBR();
+      const todayDow = getDayOfWeekForDate(today);
+      const scheduledDays = parseSchedule(schedule);
+
+      return {
+        id: result._id.toString(),
+        name,
+        color,
+        icon,
+        why: why ?? null,
+        schedule,
+        created_at,
+        completedToday: false,
+        streak: 0,
+        scheduledToday: scheduledDays.has(todayDow),
+      };
     },
     {
       body: t.Object({
@@ -124,28 +121,37 @@ export const habitsRoutes = new Elysia()
         color: t.Optional(t.String()),
         icon: t.Optional(t.String()),
         why: t.Optional(t.String()),
+        schedule: t.Optional(t.String()),
       }),
     }
   )
 
-  // Update habit why
+  // Update habit (why and/or schedule)
   .patch(
     "/api/habits/:id",
-    ({ params, body }) => {
-      db.run(`UPDATE habits SET why = ? WHERE id = ?`, [body.why || null, parseInt(params.id, 10)]);
+    async ({ params, body }) => {
+      const updates: Record<string, unknown> = {};
+      if (body.why !== undefined) updates.why = body.why || null;
+      if (body.schedule !== undefined) updates.schedule = body.schedule;
+      if (Object.keys(updates).length > 0) {
+        await HabitModel.updateOne({ _id: params.id }, { $set: updates });
+      }
       return { ok: true };
     },
     {
       params: t.Object({ id: t.String() }),
-      body: t.Object({ why: t.String() }),
+      body: t.Object({
+        why: t.Optional(t.String()),
+        schedule: t.Optional(t.String()),
+      }),
     }
   )
 
   // Delete habit
   .delete(
     "/api/habits/:id",
-    ({ params }) => {
-      db.run(`DELETE FROM habits WHERE id = ?`, [parseInt(params.id, 10)]);
+    async ({ params }) => {
+      await HabitModel.findByIdAndDelete(params.id);
       return { ok: true };
     },
     { params: t.Object({ id: t.String() }) }
@@ -154,12 +160,9 @@ export const habitsRoutes = new Elysia()
   // Mark complete for today
   .post(
     "/api/habits/:id/complete",
-    ({ params }) => {
-      const today = new Date().toISOString().split("T")[0];
-      db.run(`INSERT OR IGNORE INTO habit_completions (habit_id, completed_date) VALUES (?, ?)`, [
-        parseInt(params.id, 10),
-        today,
-      ]);
+    async ({ params }) => {
+      const today = todayBR();
+      await HabitModel.updateOne({ _id: params.id }, { $addToSet: { completions: today } });
       return { ok: true };
     },
     { params: t.Object({ id: t.String() }) }
@@ -168,12 +171,9 @@ export const habitsRoutes = new Elysia()
   // Unmark today
   .delete(
     "/api/habits/:id/complete",
-    ({ params }) => {
-      const today = new Date().toISOString().split("T")[0];
-      db.run(`DELETE FROM habit_completions WHERE habit_id = ? AND completed_date = ?`, [
-        parseInt(params.id, 10),
-        today,
-      ]);
+    async ({ params }) => {
+      const today = todayBR();
+      await HabitModel.updateOne({ _id: params.id }, { $pull: { completions: today } });
       return { ok: true };
     },
     { params: t.Object({ id: t.String() }) }

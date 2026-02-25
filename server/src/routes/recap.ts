@@ -1,47 +1,49 @@
 import { Elysia } from "elysia";
-import { db, getStreak } from "../db/index.js";
+import { HabitModel } from "../db/mongoose.js";
+import { getDayOfWeekForDate, getStreak, parseSchedule, todayBR } from "../db/index.js";
 
-function dateRange(daysAgo: number, count: number): string[] {
+function sundayWeekDates(weeksAgo: number = 0): string[] {
+  const todayStr = todayBR();
+  const today = new Date(todayStr + "T12:00:00Z");
+  const dow = today.getUTCDay();
   const dates: string[] = [];
-  const base = new Date();
-  base.setUTCHours(12, 0, 0, 0);
-  for (let i = daysAgo + count - 1; i >= daysAgo; i--) {
-    const d = new Date(base);
-    d.setUTCDate(d.getUTCDate() - i);
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() - dow - weeksAgo * 7 + i);
     dates.push(d.toISOString().split("T")[0]);
   }
   return dates;
 }
 
-export const recapRoutes = new Elysia().get("/api/recap", () => {
-  const habits = db
-    .query<{ id: number; name: string; icon: string; color: string }, []>(
-      "SELECT id, name, icon, color FROM habits"
-    )
-    .all();
+export const recapRoutes = new Elysia().get("/api/recap", async () => {
+  const habits = await HabitModel.find({}, "name icon color schedule completions").lean();
 
   const habitCount = habits.length;
-  const thisWeekDates = dateRange(0, 7);
-  const lastWeekDates = dateRange(7, 7);
+  const thisWeekDates = sundayWeekDates(0);
+  const lastWeekDates = sundayWeekDates(1);
 
   function weekStats(dates: string[]) {
     let totalCompletions = 0;
     let perfectDays = 0;
     let daysActive = 0;
+
     const perDay = dates.map((date) => {
-      const completed =
-        db
-          .query<{ cnt: number }, [string]>(
-            "SELECT COUNT(DISTINCT habit_id) as cnt FROM habit_completions WHERE completed_date = ?"
-          )
-          .get(date)?.cnt ?? 0;
-      const total = habitCount;
+      const dow = getDayOfWeekForDate(date);
+      const scheduledHabits = habits.filter((h) =>
+        parseSchedule(h.schedule ?? "0,1,2,3,4,5,6").has(dow)
+      );
+      const total = scheduledHabits.length;
+      const completed = scheduledHabits.filter((h) =>
+        (h.completions ?? []).includes(date)
+      ).length;
+
       const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
       totalCompletions += completed;
       if (completed > 0) daysActive++;
       if (total > 0 && completed === total) perfectDays++;
       return { date, completed, total, pct };
     });
+
     const habitPct =
       habitCount > 0 ? Math.round(perDay.reduce((s, d) => s + d.pct, 0) / perDay.length) : 0;
     return { habitPct, perfectDays, totalCompletions, daysActive, perDay };
@@ -56,7 +58,7 @@ export const recapRoutes = new Elysia().get("/api/recap", () => {
 
   let topStreak: { name: string; icon: string; streak: number } | null = null;
   for (const h of habits) {
-    const s = getStreak(h.id);
+    const s = getStreak(h.schedule ?? "0,1,2,3,4,5,6", h.completions ?? []);
     if (!topStreak || s > topStreak.streak) {
       topStreak = { name: h.name, icon: h.icon, streak: s };
     }
@@ -66,15 +68,10 @@ export const recapRoutes = new Elysia().get("/api/recap", () => {
   const endDate = thisWeekDates[thisWeekDates.length - 1];
 
   const habitBreakdown = habits.map((h) => {
-    const completions =
-      db
-        .query<{ cnt: number }, [number, string, string]>(
-          `SELECT COUNT(*) as cnt FROM habit_completions
-           WHERE habit_id = ? AND completed_date >= ? AND completed_date <= ?`
-        )
-        .get(h.id, startDate, endDate)?.cnt ?? 0;
-    const rate = Math.round((completions / 7) * 100);
-    return { name: h.name, icon: h.icon, color: h.color, completions, rate };
+    const completions: string[] = h.completions ?? [];
+    const count = completions.filter((d) => d >= startDate && d <= endDate).length;
+    const rate = Math.round((count / 7) * 100);
+    return { name: h.name, icon: h.icon, color: h.color, completions: count, rate };
   });
 
   return {

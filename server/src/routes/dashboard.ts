@@ -1,113 +1,98 @@
 import { Elysia } from "elysia";
-import { db, getStreak } from "../db/index.js";
+import { GoalModel, HabitModel, NutritionModel, SessionModel } from "../db/mongoose.js";
+import { dateBR, getDayOfWeekForDate, getStreak, parseSchedule, todayBR } from "../db/index.js";
 
-export const dashboardRoutes = new Elysia().get("/api/dashboard", () => {
-  const today = new Date().toISOString().split("T")[0];
+export const dashboardRoutes = new Elysia().get("/api/dashboard", async () => {
+  const today = todayBR();
+  const todayDow = getDayOfWeekForDate(today);
 
-  // Habits
-  const habits = db
-    .query<{ id: number; name: string; color: string; icon: string }, []>(
-      `SELECT id, name, color, icon FROM habits ORDER BY created_at ASC`
-    )
-    .all();
+  // Parallel fetches
+  const [habits, lastSession, activeGoals, nutrition] = await Promise.all([
+    HabitModel.find({}, "name color icon schedule completions created_at").sort({ created_at: 1 }).lean(),
+    SessionModel.findOne().sort({ date: -1 }).lean(),
+    GoalModel.find({ status: "active" }, "title status target_date milestones").limit(5).lean(),
+    NutritionModel.findOne({ date: today }).lean(),
+  ]);
 
+  // Habits with status
   const habitsWithStatus = habits.map((h) => {
-    const completion = db
-      .query<{ id: number }, [number, string]>(
-        `SELECT id FROM habit_completions WHERE habit_id = ? AND completed_date = ?`
-      )
-      .get(h.id, today);
-    return { ...h, completedToday: !!completion, streak: getStreak(h.id) };
+    const completions: string[] = h.completions ?? [];
+    const scheduledDays = parseSchedule(h.schedule ?? "0,1,2,3,4,5,6");
+    return {
+      id: h._id.toString(),
+      name: h.name,
+      color: h.color,
+      icon: h.icon,
+      schedule: h.schedule ?? "0,1,2,3,4,5,6",
+      completedToday: completions.includes(today),
+      streak: getStreak(h.schedule ?? "0,1,2,3,4,5,6", completions),
+      scheduledToday: scheduledDays.has(todayDow),
+    };
   });
 
-  const habitsDoneToday = habitsWithStatus.filter((h) => h.completedToday).length;
+  const scheduledToday = habitsWithStatus.filter((h) => h.scheduledToday);
+  const habitsDoneToday = scheduledToday.filter((h) => h.completedToday).length;
 
   // Last workout
-  const lastSession = db
-    .query<{ id: number; date: string; notes: string | null }, []>(
-      `SELECT id, date, notes FROM workout_sessions ORDER BY date DESC LIMIT 1`
-    )
-    .get();
-
   let lastWorkout = null;
   if (lastSession) {
-    const sets = db
-      .query<{ exercise_name: string; reps: number; weight_kg: number; is_pr: number }, [number]>(
-        `SELECT e.name as exercise_name, ws.reps, ws.weight_kg, ws.is_pr
-         FROM workout_sets ws JOIN exercises e ON ws.exercise_id = e.id
-         WHERE ws.session_id = ?`
-      )
-      .all(lastSession.id);
-
-    const exerciseNames = [...new Set(sets.map((s) => s.exercise_name))];
-    const prCount = sets.filter((s) => s.is_pr).length;
-
-    lastWorkout = { ...lastSession, exerciseNames, totalSets: sets.length, prCount };
+    const allSets = (lastSession.exercises ?? []).flatMap((ex) => ex.sets ?? []);
+    const exerciseNames = (lastSession.exercises ?? []).map((ex) => ex.name);
+    const prCount = allSets.filter((s) => s.is_pr).length;
+    lastWorkout = {
+      id: lastSession._id.toString(),
+      date: lastSession.date,
+      notes: lastSession.notes ?? null,
+      exerciseNames,
+      totalSets: allSets.length,
+      prCount,
+    };
   }
 
-  // Active goals
-  const goals = db
-    .query<{ id: number; title: string; status: string; target_date: string | null }, []>(
-      `SELECT id, title, status, target_date FROM goals WHERE status = 'active' LIMIT 5`
-    )
-    .all();
-
-  const goalsWithProgress = goals.map((g) => {
-    const total =
-      db
-        .query<{ c: number }, [number]>(
-          `SELECT COUNT(*) as c FROM goal_milestones WHERE goal_id = ?`
-        )
-        .get(g.id)?.c ?? 0;
-    const done =
-      db
-        .query<{ c: number }, [number]>(
-          `SELECT COUNT(*) as c FROM goal_milestones WHERE goal_id = ? AND completed_at IS NOT NULL`
-        )
-        .get(g.id)?.c ?? 0;
+  // Goals with progress
+  const goalsWithProgress = activeGoals.map((g) => {
+    const milestones = g.milestones ?? [];
+    const total = milestones.length;
+    const done = milestones.filter((m) => m.completed_at).length;
     return {
-      ...g,
+      id: g._id.toString(),
+      title: g.title,
+      status: g.status ?? "active",
+      target_date: g.target_date ?? null,
       progress: total > 0 ? Math.round((done / total) * 100) : 0,
       totalMilestones: total,
       doneMilestones: done,
     };
   });
 
-  // Today's nutrition
-  const nutrition = db
-    .query<{ calories: number; protein_g: number; carbs_g: number; fat_g: number }, [string]>(
-      `SELECT calories, protein_g, carbs_g, fat_g FROM nutrition_logs WHERE date = ?`
-    )
-    .get(today) ?? { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 };
-
-  // Weekly habit completion rate (last 7 days)
-  const weekStart = new Date();
-  weekStart.setDate(weekStart.getDate() - 6);
-  const weekDates: string[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(weekStart);
-    d.setDate(d.getDate() + i);
-    weekDates.push(d.toISOString().split("T")[0]);
-  }
-
+  // Weekly habit completion (last 7 days)
+  const weekDates = Array.from({ length: 7 }, (_, i) => dateBR(6 - i));
   const weeklyData = weekDates.map((date) => {
-    const completed =
-      db
-        .query<{ c: number }, [string]>(
-          `SELECT COUNT(DISTINCT habit_id) as c FROM habit_completions WHERE completed_date = ?`
-        )
-        .get(date)?.c ?? 0;
-    return { date, completed, total: habits.length };
+    const dow = getDayOfWeekForDate(date);
+    const scheduledOnDay = habits.filter((h) =>
+      parseSchedule(h.schedule ?? "0,1,2,3,4,5,6").has(dow)
+    );
+    const total = scheduledOnDay.length;
+    if (total === 0) return { date, completed: 0, total: 0 };
+    const completed = scheduledOnDay.filter((h) =>
+      (h.completions ?? []).includes(date)
+    ).length;
+    return { date, completed, total };
   });
 
   return {
     today,
     habits: habitsWithStatus,
     habitsDoneToday,
-    totalHabits: habits.length,
+    totalHabits: scheduledToday.length,
     lastWorkout,
     goals: goalsWithProgress,
-    nutrition,
+    nutrition: {
+      calories: nutrition?.calories ?? 0,
+      protein_g: nutrition?.protein_g ?? 0,
+      carbs_g: nutrition?.carbs_g ?? 0,
+      fat_g: nutrition?.fat_g ?? 0,
+    },
     weeklyData,
   };
 });
