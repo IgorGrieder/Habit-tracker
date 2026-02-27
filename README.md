@@ -1,60 +1,56 @@
 # ATLAS — Personal Ops Tracker
 
-A gamified personal life tracker with a dark game-HUD aesthetic. Built for people who want to treat their habits, workouts, goals, and nutrition like a real-time strategy game.
+A gamified personal life tracker with a game-HUD aesthetic for habits, workouts, goals, nutrition, and weekly recaps.
 
 ## Stack
 
 | Layer | Tech |
 |-------|------|
-| Frontend | React 18 + Vite 5, Tailwind CSS, TanStack Query, Recharts |
-| Backend | Fastify 4 on Bun runtime |
-| Database | SQLite via `bun:sqlite` (stored at `server/atlas.db`) |
+| Frontend | React 18 + Vite + Tailwind CSS |
+| Backend | Node.js + NestJS + Mongoose |
+| Database | MongoDB Atlas |
 | Linting/Formatting | BiomeJS |
 
 ## Features
 
-- **Habits** — Daily check-in tile grid, 28-day heatmap, streak tracking, aggregate completion chart
-- **Workouts** — Session log with sets/reps/weight, automatic PR detection per rep count
-- **Goals** — Milestones with progress bar, statuses: active / completed / abandoned
-- **Nutrition** — Macros logging (calories, protein, carbs, fat), 7-day chart, configurable daily targets
-- **Dashboard** — Ops brief summarising all modules at a glance
+- **Habits** — Daily check-ins, streak tracking, calendar heatmap, schedule-aware completion
+- **Workouts** — Sessions with sets/reps/weight and automatic PR detection
+- **Goals** — Milestones, progress tracking, status management
+- **Nutrition** — Daily macro logging plus 7-day trend
+- **Dashboard** — Unified daily snapshot across modules
+- **Achievements & Recap** — Milestones, streak rewards, and weekly trend insights
 
 ## Getting Started
 
 ### Prerequisites
 
-- [Bun](https://bun.sh) ≥ 1.0
+- Node.js 20+
+- Bun 1.0+ (used for frontend + root scripts)
+- MongoDB connection string in `server/.env`
 
 ### Install
 
 ```bash
-bun install            # root deps (concurrently, biome)
-cd server && bun install
-cd ../client && bun install
+bun install
+npm install --prefix server
+bun install --cwd client
 ```
 
 ### Run (dev)
 
 ```bash
-# From repo root — starts both client (port 5173) and server (port 3000)
 bun run dev
 ```
 
-### Individual processes
+This starts:
+- API server on `http://localhost:3000`
+- Client on `http://localhost:5173`
+
+### Run services individually
 
 ```bash
-cd server && bun run dev   # API server with --watch
-cd client && bun run dev   # Vite dev server
-```
-
-## Code Quality
-
-BiomeJS handles both linting and formatting (no ESLint / Prettier needed).
-
-```bash
-bun run lint      # lint check
-bun run format    # auto-format
-bun run check     # lint + format, auto-fix
+npm run --prefix server dev
+bun run --cwd client dev
 ```
 
 ## Project Structure
@@ -62,22 +58,7 @@ bun run check     # lint + format, auto-fix
 ```
 /
 ├── client/           React + Vite app
-│   └── src/
-│       ├── pages/    Dashboard, Habits, Workout, Goals, Nutrition
-│       ├── components/
-│       └── lib/      api.ts (fetch helpers), utils.ts
-├── server/           Fastify + Bun API
-│   └── src/
-│       ├── db/       SQLite schema, streak & PR helpers
-│       └── routes/   habits, workouts, goals, nutrition, dashboard
+├── server/           NestJS API + Mongoose models/controllers
 ├── biome.json        Linter / formatter config
-└── package.json      Root scripts (dev, build, lint, format)
-```
-
-## Nutrition Targets
-
-Edit `TARGETS` in `client/src/pages/Nutrition.tsx`:
-
-```ts
-const TARGETS = { calories: 2500, protein_g: 160, carbs_g: 300, fat_g: 80 };
+└── package.json      Root scripts
 ```

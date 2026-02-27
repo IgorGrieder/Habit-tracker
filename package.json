@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"bun run --cwd server dev\" \"bun run --cwd client dev\"",
+    "dev": "concurrently \"npm run --prefix server dev\" \"bun run --cwd client dev\"",
     "build": "bun run --cwd client build",
-    "start": "bun run --cwd server start",
+    "start": "npm run --prefix server start",
     "lint": "biome lint .",
     "format": "biome format --write .",
     "check": "biome check --write ."

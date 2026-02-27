@@ -1,4 +1,4 @@
-import { Types, SessionModel } from "./mongoose.js";
+import { SessionModel, Types } from "./mongoose";
 
 // Returns "YYYY-MM-DD" in America/Sao_Paulo timezone
 export function todayBR(): string {

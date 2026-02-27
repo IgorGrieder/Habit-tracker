@@ -1,10 +1,28 @@
-import { Elysia, t } from "elysia";
-import { GoalModel, Types } from "../db/mongoose.js";
-import { todayBR } from "../db/index.js";
+import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { GoalModel, Types } from "../db/mongoose";
+import { todayBR } from "../db/index";
 
-export const goalsRoutes = new Elysia()
-  // List all goals with milestones
-  .get("/api/goals", async () => {
+interface CreateGoalBody {
+  title: string;
+  description?: string;
+  target_date?: string;
+}
+
+interface UpdateGoalBody {
+  title?: string;
+  description?: string;
+  target_date?: string;
+  status?: string;
+}
+
+interface AddMilestoneBody {
+  title: string;
+}
+
+@Controller("api/goals")
+export class GoalsController {
+  @Get()
+  async getGoals() {
     const goals = await GoalModel.find().sort({ created_at: -1 }).lean();
 
     return goals.map((g) => {
@@ -30,144 +48,117 @@ export const goalsRoutes = new Elysia()
         progress: total > 0 ? Math.round((done / total) * 100) : 0,
       };
     });
-  })
+  }
 
-  // Create goal
-  .post(
-    "/api/goals",
-    async ({ body }) => {
-      const { title, description, target_date } = body;
-      const created_at = todayBR();
-      const doc = {
-        title,
-        description: description ?? null,
-        target_date: target_date ?? null,
-        status: "active",
-        created_at,
-        milestones: [],
-      };
-      const result = await GoalModel.create(doc);
-      return {
-        id: result._id.toString(),
-        title,
-        description: description ?? null,
-        target_date: target_date ?? null,
-        status: "active",
-        created_at,
-        milestones: [],
-        progress: 0,
-      };
-    },
-    {
-      body: t.Object({
-        title: t.String(),
-        description: t.Optional(t.String()),
-        target_date: t.Optional(t.String()),
-      }),
+  @Post()
+  async createGoal(@Body() body: CreateGoalBody) {
+    const { title, description, target_date } = body;
+    const created_at = todayBR();
+
+    const doc = {
+      title,
+      description: description ?? null,
+      target_date: target_date ?? null,
+      status: "active",
+      created_at,
+      milestones: [],
+    };
+
+    const result = await GoalModel.create(doc);
+
+    return {
+      id: result._id.toString(),
+      title,
+      description: description ?? null,
+      target_date: target_date ?? null,
+      status: "active",
+      created_at,
+      milestones: [],
+      progress: 0,
+    };
+  }
+
+  @Patch(":id")
+  async updateGoal(@Param("id") id: string, @Body() body: UpdateGoalBody) {
+    const updates: Record<string, unknown> = {};
+
+    if (body.title !== undefined) {
+      updates.title = body.title;
     }
-  )
 
-  // Update goal (status, title, etc.)
-  .patch(
-    "/api/goals/:id",
-    async ({ params, body }) => {
-      const updates: Record<string, unknown> = {};
-      if (body.title !== undefined) updates.title = body.title;
-      if (body.description !== undefined) updates.description = body.description;
-      if (body.target_date !== undefined) updates.target_date = body.target_date;
-      if (body.status !== undefined) updates.status = body.status;
-      if (Object.keys(updates).length > 0) {
-        await GoalModel.updateOne({ _id: params.id }, { $set: updates });
-      }
-      return { ok: true };
-    },
-    {
-      params: t.Object({ id: t.String() }),
-      body: t.Object({
-        title: t.Optional(t.String()),
-        description: t.Optional(t.String()),
-        target_date: t.Optional(t.String()),
-        status: t.Optional(t.String()),
-      }),
+    if (body.description !== undefined) {
+      updates.description = body.description;
     }
-  )
 
-  // Delete goal
-  .delete(
-    "/api/goals/:id",
-    async ({ params }) => {
-      await GoalModel.findByIdAndDelete(params.id);
-      return { ok: true };
-    },
-    { params: t.Object({ id: t.String() }) }
-  )
-
-  // Add milestone
-  .post(
-    "/api/goals/:id/milestones",
-    async ({ params, body }) => {
-      const goal = await GoalModel.findById(params.id, "milestones").lean();
-      const position = (goal?.milestones ?? []).length;
-      const milestoneId = new Types.ObjectId();
-      const newMilestone = {
-        _id: milestoneId,
-        title: body.title,
-        completed_at: null,
-        position,
-      };
-
-      await GoalModel.updateOne(
-        { _id: params.id },
-        { $push: { milestones: newMilestone } }
-      );
-
-      return {
-        id: milestoneId.toString(),
-        goal_id: params.id,
-        title: body.title,
-        completed_at: null,
-        position,
-      };
-    },
-    {
-      params: t.Object({ id: t.String() }),
-      body: t.Object({ title: t.String() }),
+    if (body.target_date !== undefined) {
+      updates.target_date = body.target_date;
     }
-  )
 
-  // Toggle milestone completion
-  .patch(
-    "/api/goals/:id/milestones/:milestoneId",
-    async ({ params }) => {
-      const mid = new Types.ObjectId(params.milestoneId);
-      const goal = await GoalModel.findOne(
-        { _id: params.id, "milestones._id": mid },
-        { "milestones.$": 1 }
-      ).lean();
+    if (body.status !== undefined) {
+      updates.status = body.status;
+    }
 
-      const milestone = goal?.milestones?.[0];
-      const newCompleted = milestone?.completed_at ? null : new Date().toISOString();
+    if (Object.keys(updates).length > 0) {
+      await GoalModel.updateOne({ _id: id }, { $set: updates });
+    }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await GoalModel.updateOne(
-        { _id: params.id, "milestones._id": mid },
-        { $set: { "milestones.$.completed_at": newCompleted } } as any
-      );
+    return { ok: true };
+  }
 
-      return { ok: true };
-    },
-    { params: t.Object({ id: t.String(), milestoneId: t.String() }) }
-  )
+  @Delete(":id")
+  async deleteGoal(@Param("id") id: string) {
+    await GoalModel.findByIdAndDelete(id);
+    return { ok: true };
+  }
 
-  // Delete milestone
-  .delete(
-    "/api/goals/:id/milestones/:milestoneId",
-    async ({ params }) => {
-      await GoalModel.updateOne(
-        { _id: params.id },
-        { $pull: { milestones: { _id: new Types.ObjectId(params.milestoneId) } } }
-      );
-      return { ok: true };
-    },
-    { params: t.Object({ id: t.String(), milestoneId: t.String() }) }
-  );
+  @Post(":id/milestones")
+  async addMilestone(@Param("id") id: string, @Body() body: AddMilestoneBody) {
+    const goal = await GoalModel.findById(id, "milestones").lean();
+    const position = (goal?.milestones ?? []).length;
+
+    const milestoneId = new Types.ObjectId();
+    const newMilestone = {
+      _id: milestoneId,
+      title: body.title,
+      completed_at: null,
+      position,
+    };
+
+    await GoalModel.updateOne({ _id: id }, { $push: { milestones: newMilestone } });
+
+    return {
+      id: milestoneId.toString(),
+      goal_id: id,
+      title: body.title,
+      completed_at: null,
+      position,
+    };
+  }
+
+  @Patch(":id/milestones/:milestoneId")
+  async toggleMilestone(@Param("id") id: string, @Param("milestoneId") milestoneId: string) {
+    const mid = new Types.ObjectId(milestoneId);
+
+    const goal = await GoalModel.findOne({ _id: id, "milestones._id": mid }, { "milestones.$": 1 }).lean();
+
+    const milestone = goal?.milestones?.[0];
+    const newCompleted = milestone?.completed_at ? null : new Date().toISOString();
+
+    await GoalModel.updateOne(
+      { _id: id, "milestones._id": mid },
+      { $set: { "milestones.$.completed_at": newCompleted } } as never
+    );
+
+    return { ok: true };
+  }
+
+  @Delete(":id/milestones/:milestoneId")
+  async deleteMilestone(@Param("id") id: string, @Param("milestoneId") milestoneId: string) {
+    await GoalModel.updateOne(
+      { _id: id },
+      { $pull: { milestones: { _id: new Types.ObjectId(milestoneId) } } }
+    );
+
+    return { ok: true };
+  }
+}
